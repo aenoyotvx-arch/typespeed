@@ -1,0 +1,2003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Typespeed</title>
+<style>
+  :root {
+    --bg: #111418;
+    --panel: #191d23;
+    --track: #15191f;
+    --lane: #232830;
+    --rule: #262b33;
+    --bot: #3a4048;
+    --sub: #4a5058;
+    --text: #d7dae0;
+    --main: #e2b714;
+    --combo-hot: #ff8a3d;
+    --error: #ca4754;
+    --error-extra: #7e2a33;
+
+    /* Everything vertical scales with the viewport so the page always fits
+       at 100% zoom. Floors keep it legible; ceilings are the desktop sizes. */
+    --word-size: clamp(0.95rem, 0.4rem + 2.4vh, 1.6rem);
+    --line-h: 2.1;
+    --lines: 3;
+    /* Derived, never hand-computed: #words, #input and .focus-hint all read
+       this, so the invisible input always covers the word list exactly. */
+    --words-h: calc(var(--word-size) * var(--line-h) * var(--lines));
+
+    --lane-h: clamp(22px, 3.4vh, 34px);
+    --gap: clamp(0.6rem, 1.6vh, 1.75rem);
+    --pad-y: clamp(0.6rem, 1.8vh, 2rem);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--sub);
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* `safe` falls back to start-alignment when content overflows. Plain
+       `center` overflows at BOTH ends and clips the header off the top. */
+    justify-content: safe center;
+    gap: var(--gap);
+    padding: var(--pad-y) 1rem;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  header {
+    font-size: clamp(1rem, 0.5rem + 1.4vh, 1.5rem);
+    font-weight: 700;
+    color: var(--main);
+    letter-spacing: -0.02em;
+    display: flex; align-items: center; gap: 0.6rem;
+  }
+  .level {
+    font-size: 0.6em; font-weight: 700;
+    background: var(--panel); color: var(--sub);
+    border-radius: 0.3rem; padding: 0.15em 0.5em;
+    font-variant-numeric: tabular-nums;
+  }
+  .gear {
+    background: none; border: none; cursor: pointer;
+    color: var(--sub); font-size: 0.7em; padding: 0.2rem;
+    transition: color 0.1s, transform 0.2s;
+  }
+  .gear:hover { color: var(--main); transform: rotate(45deg); }
+  .gear:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+
+  /* ---------- settings ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 20;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    padding: 1rem;
+  }
+  .modal[hidden] { display: none; }
+  .sheet {
+    background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 0.7rem; padding: 1.25rem;
+    width: min(30rem, 100%); max-height: 85vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 1.1rem;
+    font-size: 0.8rem;
+  }
+  .sheet-head {
+    display: flex; align-items: center; justify-content: space-between;
+    color: var(--main); font-weight: 700; font-size: 1rem;
+  }
+  .setting { display: flex; flex-direction: column; gap: 0.5rem; }
+  .setting-label { color: var(--sub); letter-spacing: 0.06em; }
+  .setting-hint { color: var(--bot); font-size: 0.65rem; }
+
+  .swatches { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .swatch {
+    border: 1px solid var(--rule); border-radius: 0.4rem;
+    padding: 0.4rem 0.6rem; cursor: pointer; font: inherit;
+    display: flex; align-items: center; gap: 0.45rem;
+    transition: border-color 0.1s;
+  }
+  .swatch:hover { border-color: var(--sub); }
+  .swatch.active { border-color: var(--main); }
+  .swatch:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+  .swatch .dots { display: flex; gap: 0.15rem; }
+  .swatch .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; }
+  .swatch .name { color: var(--sub); font-size: 0.7rem; }
+  .swatch.active .name { color: var(--text); }
+
+  .account-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .account-email { color: var(--text); font-size: 0.75rem; }
+  .email {
+    flex: 1; min-width: 12rem;
+    background: var(--bg); border: 1px solid var(--rule); border-radius: 0.35rem;
+    color: var(--text); font: inherit; font-size: 0.75rem; padding: 0.4rem 0.6rem;
+  }
+  .email:focus-visible { outline: 2px solid var(--main); outline-offset: 1px; }
+
+  .xp-row { display: flex; align-items: center; gap: 0.75rem; }
+  .xp-bar {
+    flex: 1; height: 0.5rem; border-radius: 0.25rem;
+    background: var(--track); overflow: hidden;
+  }
+  .xp-fill { height: 100%; background: var(--main); width: 0%; transition: width 0.4s ease; }
+
+  /* ---------- config ---------- */
+  .config {
+    display: flex;
+    gap: 0.75rem 1.25rem;
+    background: var(--panel);
+    padding: 0.6rem 1.2rem;
+    border-radius: 0.6rem;
+    font-size: 0.8rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 100%;
+  }
+  .config-group { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; justify-content: center; }
+  .config-group + .config-group {
+    border-left: 1px solid var(--rule);
+    padding-left: 1.25rem;
+  }
+  /* The divider rule only reads correctly between groups sharing a row. */
+  @media (max-width: 560px) {
+    .config-group + .config-group { border-left: none; padding-left: 0; }
+  }
+  .opt {
+    background: none; border: none; padding: 0.1rem 0.25rem;
+    color: var(--sub); font: inherit; cursor: pointer;
+    border-radius: 0.2rem;
+    transition: color 0.1s;
+  }
+  .opt:hover { color: var(--text); }
+  .opt.active { color: var(--main); }
+  .opt:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+
+  /* ---------- animal picker ---------- */
+  .animals { display: flex; gap: 0.3rem; align-items: center; }
+  .animal {
+    background: none; border: 1px solid transparent; cursor: pointer;
+    font-size: 1.15rem; line-height: 1; padding: 0.25rem 0.3rem;
+    border-radius: 0.35rem; position: relative;
+    transition: border-color 0.1s, background 0.1s;
+  }
+  .animal:hover { background: #20252c; }
+  .animal.selected { border-color: var(--main); background: #20252c; }
+  .animal.locked { filter: grayscale(1) brightness(0.45); cursor: not-allowed; }
+  .animal:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+
+  /* One tooltip implementation, shared by the animal picker and the
+     trophy shelf. Anything with [data-tip] gets it. */
+  [data-tip] { position: relative; }
+  [data-tip]:hover::after,
+  [data-tip]:focus-visible::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 0.5rem); left: 50%;
+    transform: translateX(-50%);
+    background: #05070a; color: var(--text);
+    font-size: 0.65rem; font-family: inherit;
+    white-space: nowrap; padding: 0.3rem 0.5rem; border-radius: 0.3rem;
+    border: 1px solid var(--rule); z-index: 5; pointer-events: none;
+    filter: none;
+  }
+
+  /* ---------- race track ---------- */
+  .stage { width: min(1000px, 100%); position: relative; }
+
+  .track {
+    background: var(--track);
+    border: 1px solid var(--rule);
+    border-radius: 0.5rem;
+    overflow: hidden;
+    margin-bottom: var(--gap);
+    position: relative;
+  }
+
+  .lane {
+    position: relative;
+    height: var(--lane-h);
+    display: flex;
+    align-items: center;
+  }
+  .lane + .lane { border-top: 1px solid var(--lane); }
+  .lane.mine { background: rgba(226, 183, 20, 0.05); }
+
+  .lane-label {
+    position: absolute; left: 0.6rem;
+    font-size: 0.6rem; color: var(--bot);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.06em;
+    z-index: 1;
+  }
+  .lane.mine .lane-label { color: var(--main); }
+
+  /* Finish line: the only checkered thing on the page. */
+  .finish {
+    position: absolute; top: 0; bottom: 0; right: 1.5rem;
+    width: 8px; z-index: 1;
+    background-image:
+      repeating-linear-gradient(45deg, #2f353d 0 4px, transparent 4px 8px),
+      linear-gradient(#454b55, #454b55);
+    opacity: 0.75;
+  }
+
+  .runner {
+    position: absolute;
+    left: calc(2.6rem + var(--p, 0) * (100% - 5.4rem));
+    /* Tied to the lane so an animal can never outgrow its lane. */
+    font-size: calc(var(--lane-h) * 0.62); line-height: 1;
+    will-change: left;
+    z-index: 2;
+  }
+  .runner .glyph { display: inline-block; }
+
+  @keyframes bob {
+    0%, 100% { transform: translateY(0) scaleX(1); }
+    50%      { transform: translateY(-3px) scaleX(1.06); }
+  }
+  .running .runner .glyph {
+    animation: bob var(--bob, 0.5s) ease-in-out infinite;
+  }
+
+  /* Combo streak trails the runner rather than sitting on it. */
+  .runner::before {
+    content: "";
+    position: absolute; right: 100%; top: 50%;
+    transform: translateY(-50%);
+    width: var(--trail, 0px); height: 3px;
+    border-radius: 2px;
+    background: linear-gradient(to left, var(--combo-hot), transparent);
+    opacity: var(--trail-op, 0);
+    transition: opacity 0.2s;
+  }
+
+  .runner.done::after {
+    content: "🏁";
+    position: absolute; left: 100%; margin-left: 0.2rem;
+    font-size: 0.75rem;
+  }
+
+  /* ---------- combo ---------- */
+  .meter {
+    display: flex; align-items: baseline; gap: 0.5rem;
+    height: clamp(1.5rem, 0.6rem + 2.2vh, 2.4rem);
+  }
+  .timer {
+    color: var(--main);
+    font-size: clamp(1.1rem, 0.5rem + 1.7vh, 1.75rem);
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .timer.show { opacity: 1; }
+
+  .combo {
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--sub);
+    opacity: 0;
+    transition: opacity 0.15s, color 0.2s;
+  }
+  .combo.show { opacity: 1; }
+  .combo.t1 { color: var(--main); }
+  .combo.t2 { color: #f0a52a; }
+  .combo.t3 { color: var(--combo-hot); }
+  .combo.t4 { color: var(--combo-hot); text-shadow: 0 0 12px rgba(255,138,61,0.6); }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+  }
+  .combo.break { animation: shake 0.18s ease; color: var(--error); }
+
+  /* ---------- words ---------- */
+  #words {
+    font-size: var(--word-size);
+    line-height: var(--line-h);
+    height: var(--words-h);
+    overflow: hidden;
+    position: relative;
+    letter-spacing: 0.02em;
+    transition: filter 0.2s;
+  }
+  #words.unfocused { filter: blur(4px); }
+
+  .word { display: inline-block; margin: 0 0.5em 0 0; border-bottom: 2px solid transparent; }
+  .word.bad { border-bottom-color: var(--error); }
+
+  .letter { color: var(--sub); transition: color 0.05s; }
+  .letter.correct { color: var(--text); }
+  .letter.incorrect { color: var(--error); }
+  .letter.extra { color: var(--error-extra); }
+
+  #caret {
+    position: absolute;
+    width: 2px;
+    background: var(--main);
+    border-radius: 1px;
+    transition: left 0.08s ease, top 0.08s ease;
+    animation: blink 1s ease-in-out infinite;
+  }
+  body.running #caret { animation: none; }
+  @keyframes blink { 0%,40% {opacity:1} 50%,90% {opacity:0} 100% {opacity:1} }
+
+  /* Caret styles. updateCaret() sets left/top/height; only the box changes. */
+  body[data-caret="block"] #caret { width: 0.6em; opacity: 0.4; border-radius: 2px; }
+  body[data-caret="underline"] #caret {
+    width: 0.6em; height: 3px !important;
+    transform: translateY(1.55em); border-radius: 2px;
+  }
+
+  /* Blind mode: no live correctness feedback. The score still counts every
+     keystroke — this hides the signal, it does not change the grading. */
+  body.blind .letter.correct,
+  body.blind .letter.incorrect { color: var(--text); }
+  body.blind .letter.extra { color: var(--sub); }
+  body.blind .word.bad { border-bottom-color: transparent; }
+
+  .focus-hint {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: var(--words-h);
+    display: none; align-items: center; justify-content: center;
+    color: var(--text); font-size: 0.9rem; cursor: pointer;
+  }
+  #words.unfocused + .focus-hint { display: flex; }
+
+  #input {
+    position: absolute; opacity: 0; bottom: 0; left: 0;
+    width: 100%; height: var(--words-h); cursor: default;
+  }
+
+  /* ---------- results ---------- */
+  .results {
+    display: none; flex-direction: column; align-items: center;
+    gap: clamp(0.6rem, 2vh, 2rem);
+    width: 100%; max-width: 100%;
+  }
+  .results.show { display: flex; }
+
+  .placing {
+    font-size: clamp(0.85rem, 0.5rem + 0.9vh, 1.1rem); color: var(--text);
+    display: flex; align-items: center; gap: 0.6rem;
+  }
+  .placing .medal { font-size: 1.4em; }
+  .placing strong { color: var(--main); font-weight: 700; }
+
+  .stats {
+    display: flex; gap: clamp(1.25rem, 4vw, 3rem);
+    align-items: center; flex-wrap: wrap; justify-content: center;
+  }
+  .stat-label { font-size: 0.85rem; color: var(--sub); }
+  .stat-value {
+    font-size: clamp(1.9rem, 0.5rem + 5vh, 3.5rem);
+    color: var(--main); line-height: 1.1; font-variant-numeric: tabular-nums;
+  }
+  .stat-value.small { font-size: clamp(1.2rem, 0.4rem + 2.8vh, 2rem); color: var(--text); }
+  .stat-sub { font-size: 0.8rem; color: var(--sub); }
+
+  /* The test-type caption reads as a label, not a number. */
+  .stat-type { font-size: 0.95rem; color: var(--main); line-height: 1.35; white-space: pre-line; }
+
+  /* Result action bar: the primary button keeps its weight, the rest are quiet
+     icon buttons flanking it. */
+  .actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
+  .act {
+    background: none; border: 1px solid var(--rule); color: var(--sub);
+    font: inherit; font-size: 1rem; cursor: pointer;
+    width: 2.4rem; height: 2.4rem; border-radius: 0.5rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: color 0.1s, border-color 0.1s, background 0.1s;
+  }
+  .act:hover { color: var(--text); border-color: var(--sub); background: var(--panel); }
+  .act:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+  .act.ok { border-color: var(--main); color: var(--main); }
+
+  /* A great run earns 12 cards. They scroll sideways inside this row so the
+     page itself never scrolls in either axis. */
+  .cards {
+    display: flex; gap: 0.75rem;
+    flex-wrap: nowrap; justify-content: safe center;
+    max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain;
+    padding-bottom: 0.2rem;
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule) transparent;
+  }
+  .cards:not(:has(.card)) { display: none; }
+  .cards::-webkit-scrollbar { height: 6px; }
+  .cards::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+  .cards::-webkit-scrollbar-track { background: transparent; }
+
+  .card {
+    display: flex; align-items: center; gap: 0.6rem;
+    flex: 0 0 auto;
+    background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 0.5rem; padding: 0.6rem 0.9rem;
+    animation: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
+  }
+  .card.unlock { border-color: var(--main); }
+  .card .icon { font-size: 1.5rem; }
+  .card .name { color: var(--text); font-size: 0.8rem; }
+  .card .desc { color: var(--sub); font-size: 0.65rem; }
+
+  @keyframes pop {
+    from { opacity: 0; transform: translateY(10px) scale(0.9); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* Trophy shelf: rides inside the footer row, so it costs no extra height
+     and is visible at all times rather than only after a race. */
+  .trophies {
+    display: flex; gap: 0.35rem; flex-wrap: wrap; justify-content: center;
+    font-size: clamp(0.8rem, 2vh, 1rem); line-height: 1;
+  }
+  .trophies span { opacity: 0.25; cursor: help; }
+  .trophies span.earned { opacity: 1; }
+  .trophies span.just {
+    animation: pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
+  }
+
+  /* The race is over: the placement medal already reports the standings, so
+     the track and the empty meter band just cost height the stats need. */
+  body.done .meter { display: none; }
+  body.done .track { display: none; }
+
+  /* #input is sized to the word list but anchored to the bottom of .stage.
+     Once results collapse the stage to just the track, it juts up over the
+     config bar and swallows its clicks. Inert it rather than hiding it:
+     a display change here would break focusInput() on the next restart. */
+  body.done #input { pointer-events: none; }
+
+  /* The one thing to do on the results screen, so it looks like the one thing. */
+  .again {
+    display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
+    background: var(--main); color: #14161a; border: none;
+    font: inherit; cursor: pointer;
+    padding: clamp(0.4rem, 1.2vh, 0.7rem) 2rem; border-radius: 0.5rem;
+    transition: transform 0.1s, filter 0.1s;
+  }
+  .again:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .again:active { transform: none; }
+  .again:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+  .again-label { font-size: 1rem; font-weight: 700; letter-spacing: 0.02em; }
+  .again-keys { font-size: 0.65rem; opacity: 0.7; }
+  .again kbd {
+    background: rgba(0,0,0,0.22); color: inherit;
+    border-radius: 0.2rem; padding: 0.05rem 0.3rem;
+  }
+
+  footer {
+    font-size: 0.75rem; color: #333941; text-align: center;
+    line-height: 1.6;
+    display: flex; gap: 0.5rem 1rem; flex-wrap: wrap;
+    justify-content: center; align-items: center;
+  }
+  .footer-sep { color: var(--rule); }
+  kbd { background: var(--panel); border-radius: 0.25rem; padding: 0.1rem 0.4rem; color: var(--sub); }
+
+  .hidden { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #caret { transition: none; animation: none; }
+    .letter, .timer, #words, .combo { transition: none; }
+    .running .runner .glyph { animation: none; }
+    .combo.break { animation: none; }
+    .card { animation: none; }
+    .trophies span.just { animation: none; }
+    .runner::before { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="wordmark">typespeed</span>
+  <span class="level" id="levelBadge" data-tip="level">1</span>
+  <button class="gear" id="gearBtn" aria-label="Settings" data-tip="settings">⚙</button>
+</header>
+
+<div class="modal" id="settings" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="sheet-head">
+      <span>settings</span>
+      <button class="act" id="closeSettings" aria-label="Close">✕</button>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">account</div>
+      <div id="accountBox"></div>
+      <span class="setting-hint">progress syncs across devices when signed in. sign-in is a
+        one-time link sent to your email — there is no password.</span>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">theme</div>
+      <div class="swatches" id="themeList"></div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">caret</div>
+      <div class="config-group" id="caretList"></div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">blind mode</div>
+      <div class="config-group">
+        <button class="opt" id="blindBtn">off</button>
+        <span class="setting-hint">hides right/wrong while typing — you only see the score</span>
+      </div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">xp</div>
+      <div class="xp-row">
+        <div class="xp-bar"><div class="xp-fill" id="xpFill"></div></div>
+        <span class="setting-hint" id="xpText"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="config" id="config">
+  <div class="config-group" id="modeGroup">
+    <button class="opt active" data-mode="time">time</button>
+    <button class="opt" data-mode="words">words</button>
+    <button class="opt" data-mode="quote">quote</button>
+  </div>
+  <div class="config-group" id="amountGroup"></div>
+  <div class="config-group">
+    <button class="opt" id="punctBtn">punctuation</button>
+    <button class="opt" id="numBtn">numbers</button>
+  </div>
+  <div class="config-group">
+    <div class="animals" id="animals"></div>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="track" id="track">
+    <div class="finish"></div>
+  </div>
+
+  <div class="meter">
+    <div class="timer" id="timer">30</div>
+    <div class="combo" id="combo"></div>
+  </div>
+
+  <div id="words" class="unfocused"></div>
+  <div class="focus-hint" id="focusHint">click here or press any key to focus</div>
+  <div id="caret"></div>
+  <input id="input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Typing input">
+</div>
+
+<div class="results" id="results">
+  <div class="placing" id="rPlace"></div>
+  <div class="stats">
+    <div class="test-type">
+      <div class="stat-label">test type</div>
+      <div class="stat-type" id="rType">time 30</div>
+    </div>
+    <div>
+      <div class="stat-label">wpm</div>
+      <div class="stat-value" id="rWpm">0</div>
+    </div>
+    <div>
+      <div class="stat-label">acc</div>
+      <div class="stat-value" id="rAcc">0%</div>
+    </div>
+    <div>
+      <div class="stat-label">raw</div>
+      <div class="stat-value small" id="rRaw">0</div>
+    </div>
+    <div>
+      <div class="stat-label">consistency</div>
+      <div class="stat-value small" id="rCons">—</div>
+    </div>
+    <div>
+      <div class="stat-label">best combo</div>
+      <div class="stat-value small" id="rCombo">0</div>
+    </div>
+    <div>
+      <div class="stat-label">chars</div>
+      <div class="stat-value small" id="rChars">0/0/0/0</div>
+      <div class="stat-sub">correct / incorrect / extra / missed</div>
+    </div>
+    <div>
+      <div class="stat-label">time</div>
+      <div class="stat-value small" id="rTime">0s</div>
+      <div class="stat-sub" id="rStamp"></div>
+    </div>
+  </div>
+  <div class="cards" id="rCards"></div>
+  <div class="actions">
+    <button class="act" id="repeatBtn" data-tip="repeat this exact test">⏪</button>
+    <button class="again" id="againBtn">
+      <span class="again-label">next test</span>
+      <span class="again-keys">press <kbd>tab</kbd> or <kbd>enter</kbd></span>
+    </button>
+    <button class="act" id="copyBtn" data-tip="copy result">📋</button>
+    <button class="act" id="imageBtn" data-tip="save result as image">🖼</button>
+  </div>
+</div>
+
+<footer>
+  <div><kbd>tab</kbd> restart &nbsp;·&nbsp; <kbd>esc</kbd> back to config</div>
+  <span class="footer-sep">·</span>
+  <div class="trophies" id="trophyShelf" aria-label="Achievements"></div>
+  <div id="best"></div>
+</footer>
+
+<script>
+/* ============================================================
+   storage — localStorage where allowed, memory when sandboxed
+   ============================================================ */
+const store = (() => {
+  const mem = new Map();
+  let live = true;
+  try {
+    localStorage.setItem("typespeed:probe", "1");
+    localStorage.removeItem("typespeed:probe");
+  } catch (e) { live = false; }
+
+  return {
+    get(k) {
+      if (live) {
+        try { return localStorage.getItem("typespeed:" + k); }
+        catch (e) { live = false; }
+      }
+      return mem.has(k) ? mem.get(k) : null;
+    },
+    set(k, v) {
+      if (live) {
+        try { localStorage.setItem("typespeed:" + k, v); return; }
+        catch (e) { live = false; }
+      }
+      mem.set(k, v);
+    },
+    json(k, fallback) {
+      try { return JSON.parse(this.get(k)) ?? fallback; }
+      catch (e) { return fallback; }
+    }
+  };
+})();
+
+/* ============================================================
+   content
+   ============================================================ */
+const WORDS = ("the be of and a to in he have it that for they i with as not on she at by this we you do but from or which one would all will there say who make when can more if no man out other so what time up go about than into could state only new year some take come these know see use get like then first any work now may such give over think most even find day also after way many must look before great back through long where much should well people down own just because good each those feel seem how high too place little world very still nation hand old life tell write become here show house both between need mean call develop under last right move thing general school never same another begin while number part turn real leave might want point form off child few small since against ask late home interest large person end open public follow during present without again hold govern around possible head consider word program problem however lead system set order eye plan run keep face fact group play stand increase early course change help line").split(" ");
+
+const QUOTES = [
+  "The quick brown fox jumps over the lazy dog while the cat watches from a sunny windowsill.",
+  "It is not that I am so smart, it is just that I stay with problems longer than most people do.",
+  "Simplicity is the ultimate sophistication, and clarity is the shortest path between two minds.",
+  "We are what we repeatedly do; excellence, then, is not an act but a habit formed over time.",
+  "The best way to predict the future is to invent it, one small deliberate decision at a time.",
+  "Programs must be written for people to read, and only incidentally for machines to execute.",
+  "Any fool can write code that a computer understands; good programmers write code humans understand."
+];
+
+const PUNCT = [",", ".", ".", "?", "!", ";", ":", "'", "\"", "-"];
+const AMOUNTS = { time: [15, 30, 60, 120], words: [10, 25, 50, 100] };
+
+/* Bots are animation, not opponents with any intelligence. */
+const BOTS = [
+  { wpm: 40, emoji: "🦔" },
+  { wpm: 60, emoji: "🐕" },
+  { wpm: 80, emoji: "🐆" }
+];
+const TOP_BOT = BOTS[BOTS.length - 1];
+
+/* Unlocks are cosmetic. No animal is faster than another. */
+const ANIMALS = [
+  { id: "turtle",  emoji: "🐢", req: null,                             test: () => true },
+  { id: "rabbit",  emoji: "🐇", req: "finish 3 races",                 test: s => s.races >= 3 },
+  { id: "fox",     emoji: "🦊", req: "reach 50 wpm",                   test: s => s.bestWpm >= 50 },
+  { id: "snail",   emoji: "🐌", req: "finish a run at 100% accuracy",  test: s => s.perfect },
+  { id: "cheetah", emoji: "🐆", req: "reach 80 wpm",                   test: s => s.bestWpm >= 80 },
+  { id: "eagle",   emoji: "🦅", req: "beat the 80 wpm bot",            test: s => s.beatTop },
+  { id: "dragon",  emoji: "🐉", req: "reach 100 wpm",                  test: s => s.bestWpm >= 100 }
+];
+
+const ACHIEVEMENTS = [
+  { id: "first",    icon: "🏁", name: "off the line",  desc: "finish your first race",     test: r => true },
+  { id: "speed",    icon: "⚡", name: "speed demon",   desc: "80 wpm",                     test: r => r.wpm >= 80 },
+  { id: "perfect",  icon: "🎯", name: "perfectionist", desc: "100% accuracy, 25+ words",   test: r => r.acc === 100 && r.wordsTyped >= 25 },
+  { id: "century",  icon: "💯", name: "centurion",     desc: "100 wpm",                    test: r => r.wpm >= 100 },
+  { id: "unbroken", icon: "🔥", name: "unbroken",      desc: "100-character combo",        test: r => r.maxCombo >= 100 },
+  { id: "slayer",   icon: "🗡️", name: "giant slayer",  desc: "beat the 80 wpm bot",        test: r => r.beatTop },
+  { id: "marathon", icon: "🏃", name: "marathon",      desc: "finish a 120 second run",    test: r => r.mode === "time" && r.amount === 120 },
+  { id: "sharp",    icon: "🏹", name: "sharpshooter",  desc: "95% accuracy at 60+ wpm",    test: r => r.acc >= 95 && r.wpm >= 60 }
+];
+
+/* ============================================================
+   persistent profile
+   ============================================================ */
+const profile = Object.assign(
+  { races: 0, bestWpm: 0, perfect: false, beatTop: false, animal: "turtle", earned: [], xp: 0, pbs: {} },
+  store.json("profile", {})
+);
+if (!profile.pbs) profile.pbs = {};
+const saveProfile = () => store.set("profile", JSON.stringify(profile));
+
+/* Personal bests used to live in loose "best-<mode>-<n>" keys, which cannot be
+   synced as a unit. Fold any that still exist into profile.pbs, once. */
+(function migratePbs() {
+  const keys = ["time-15","time-30","time-60","time-120",
+                "words-10","words-25","words-50","words-100","quote-q"];
+  let moved = false;
+  keys.forEach(k => {
+    const old = Number(store.get("best-" + k)) || 0;
+    if (old > (profile.pbs[k] || 0)) { profile.pbs[k] = old; moved = true; }
+  });
+  if (moved) saveProfile();
+})();
+
+const isUnlocked = a => a.test(profile);
+
+/* ============================================================
+   cloud sync (Supabase)
+
+   The artifact sandbox blocks every external host, so the CDN import throws
+   there. That is expected: the catch drops us into local mode, which is the
+   entire pre-cloud behaviour. One file, two modes, no build step.
+   ============================================================ */
+const SUPA = {
+  url: "https://mbnyzdfslyzocibjcexk.supabase.co",
+  // Publishable key. Safe to ship: row-level security is what confines it to
+  // the signed-in user's own row. The sb_secret_ key must never appear here.
+  anonKey: "sb_publishable_IWBqBwSBFJbhhYk4DMF0Sg_GrSPdGLO"
+};
+
+let cloud = null;          // supabase client, or null in local mode
+let session = null;        // current auth session, or null
+let cloudError = null;     // human-readable reason we are in local mode
+
+/** Turn a postgrest failure into something a human can act on. */
+function noteCloudError(e) {
+  const msg = (e && e.message) || "";
+  if (e && e.code === "PGRST205") cloudError = "database not set up — run the profiles table SQL";
+  else if (/JWT|api key/i.test(msg))  cloudError = "bad api key";
+  else cloudError = "sync failed";
+}
+
+const PROGRESS_KEYS = ["races", "bestWpm", "perfect", "beatTop", "earned", "xp", "pbs", "animal"];
+
+/** Snapshot of everything worth syncing. */
+function progressOf(p) {
+  const out = {};
+  PROGRESS_KEYS.forEach(k => { out[k] = p[k]; });
+  return out;
+}
+
+/**
+ * Merge two progress snapshots. Idempotent, and commutative in every field
+ * except the cosmetic `animal`, where the local side wins so a sync never
+ * changes the racer you picked. `races` takes the max rather than the sum —
+ * summing double-counts every time a device re-syncs.
+ */
+function mergeProgress(a, b) {
+  a = a || {}; b = b || {};
+  const num = k => Math.max(Number(a[k]) || 0, Number(b[k]) || 0);
+  const pbs = {};
+  // Sorted keys: object key order is insertion order, so an unsorted merge
+  // serialises differently depending on which side came first.
+  for (const k of [...new Set([...Object.keys(a.pbs || {}), ...Object.keys(b.pbs || {})])].sort()) {
+    pbs[k] = Math.max(Number((a.pbs || {})[k]) || 0, Number((b.pbs || {})[k]) || 0);
+  }
+  return {
+    races:    num("races"),
+    bestWpm:  num("bestWpm"),
+    xp:       num("xp"),
+    perfect:  Boolean(a.perfect) || Boolean(b.perfect),
+    beatTop:  Boolean(a.beatTop) || Boolean(b.beatTop),
+    // Sorted so the merge is byte-identical whichever side is "a" — two devices
+    // must never write different JSON for the same progress.
+    earned:   [...new Set([...(a.earned || []), ...(b.earned || [])])].sort(),
+    pbs:      pbs,
+    // Cosmetic, so no "correct" answer — prefer whichever side actually chose one.
+    animal:   (a.animal && a.animal !== "turtle") ? a.animal : (b.animal || "turtle")
+  };
+}
+
+async function initCloud() {
+  if (!SUPA.anonKey) { cloudError = "not configured"; return; }
+  try {
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    cloud = createClient(SUPA.url, SUPA.anonKey);
+    const { data } = await cloud.auth.getSession();
+    session = data.session;
+    cloud.auth.onAuthStateChange(async (_evt, s) => {
+      const wasSignedIn = !!session;
+      session = s;
+      if (s && !wasSignedIn) await pullAndMerge();
+      renderAccount();
+    });
+    if (session) await pullAndMerge();
+  } catch (e) {
+    cloud = null;
+    cloudError = "unavailable here";   // artifact CSP, offline, or CDN blocked
+  }
+  renderAccount();
+}
+
+async function pullAndMerge() {
+  if (!cloud || !session) return;
+  try {
+    const { data, error } = await cloud
+      .from("profiles").select("progress").eq("id", session.user.id).maybeSingle();
+    if (error) throw error;
+    const merged = mergeProgress(progressOf(profile), data ? data.progress : {});
+    Object.assign(profile, merged);
+    saveProfile();
+    renderAnimals(); renderTrophies(); renderLevel();
+    await pushProgress();           // write the merge back so both sides agree
+  } catch (e) {
+    noteCloudError(e);
+    renderAccount();
+  }
+}
+
+let pushTimer = null;
+function schedulePush() {
+  if (!cloud || !session) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushProgress, 1500);
+}
+
+async function pushProgress() {
+  if (!cloud || !session) return;
+  try {
+    const { error } = await cloud.from("profiles").upsert({
+      id: session.user.id,
+      progress: progressOf(profile),
+      updated_at: new Date().toISOString()
+    });
+    if (error) throw error;       // supabase returns errors, it does not throw them
+    cloudError = null;
+  } catch (e) {
+    noteCloudError(e);            // local copy stays authoritative
+  }
+  renderAccount();
+}
+
+async function sendMagicLink(email) {
+  if (!cloud) return { ok: false, msg: "cloud sync " + (cloudError || "unavailable") };
+  try {
+    const { error } = await cloud.auth.signInWithOtp({
+      email, options: { emailRedirectTo: location.origin + location.pathname }
+    });
+    if (error) throw error;
+    return { ok: true, msg: "check your email for the sign-in link" };
+  } catch (e) {
+    return { ok: false, msg: e.message || "could not send link" };
+  }
+}
+
+async function signOut() {
+  if (cloud) await cloud.auth.signOut();
+  session = null;
+  renderAccount();
+}
+
+/* ============================================================
+   xp and levels
+   ============================================================ */
+const XP_PER_LEVEL = 50;                                  // level n starts at 50*(n-1)^2
+const levelFromXp  = xp => 1 + Math.floor(Math.sqrt(xp / XP_PER_LEVEL));
+const xpForLevel   = n  => XP_PER_LEVEL * (n - 1) ** 2;
+
+/** Speed, weighted by accuracy, over the time actually spent. */
+const xpForRun = (wpm, acc, secs) => Math.round(wpm * (acc / 100) ** 2 * (secs / 60) * 2);
+
+function renderLevel() {
+  const lvl = levelFromXp(profile.xp);
+  const base = xpForLevel(lvl), next = xpForLevel(lvl + 1);
+  const pct = Math.min(100, ((profile.xp - base) / (next - base)) * 100);
+  $("levelBadge").textContent = lvl;
+  $("levelBadge").dataset.tip = "level " + lvl + " · " + profile.xp + " xp";
+  const fill = $("xpFill"), text = $("xpText");
+  if (fill) fill.style.width = pct.toFixed(1) + "%";
+  if (text) text.textContent = `level ${lvl} — ${profile.xp - base} / ${next - base} xp to level ${lvl + 1}`;
+}
+
+/* ============================================================
+   themes and settings
+   ============================================================ */
+const THEMES = {
+  serika:    { name: "serika",    bg: "#111418", panel: "#191d23", main: "#e2b714", text: "#d7dae0", sub: "#4a5058", error: "#ca4754", hot: "#ff8a3d" },
+  carbon:    { name: "carbon",    bg: "#313131", panel: "#3b3b3b", main: "#f8f8f2", text: "#e8e8e8", sub: "#8a8a8a", error: "#ff5f56", hot: "#ffb86c" },
+  botanical: { name: "botanical", bg: "#0e1a13", panel: "#152219", main: "#8fd694", text: "#dbe7dd", sub: "#4d6153", error: "#e06c75", hot: "#e5c07b" },
+  dracula:   { name: "dracula",   bg: "#282a36", panel: "#343746", main: "#bd93f9", text: "#f8f8f2", sub: "#6272a4", error: "#ff5555", hot: "#ffb86c" },
+  paper:     { name: "paper",     bg: "#f5f2e9", panel: "#e7e2d5", main: "#c2410c", text: "#1c1917", sub: "#a8a29e", error: "#b91c1c", hot: "#ea580c" },
+  nord:      { name: "nord",      bg: "#2e3440", panel: "#3b4252", main: "#88c0d0", text: "#eceff4", sub: "#616e88", error: "#bf616a", hot: "#d08770" }
+};
+
+const CARETS = ["line", "block", "underline"];
+
+const settings = Object.assign(
+  { theme: "serika", caret: "line", blind: false },
+  store.json("settings", {})
+);
+const saveSettings = () => store.set("settings", JSON.stringify(settings));
+
+/** Themes only rewrite the palette tokens; no component style knows about them. */
+function applyTheme(id) {
+  const t = THEMES[id] || THEMES.serika;
+  const r = document.documentElement.style;
+  r.setProperty("--bg", t.bg);
+  r.setProperty("--panel", t.panel);
+  r.setProperty("--track", t.panel);
+  r.setProperty("--main", t.main);
+  r.setProperty("--text", t.text);
+  r.setProperty("--sub", t.sub);
+  r.setProperty("--error", t.error);
+  r.setProperty("--combo-hot", t.hot);
+  // Derived shades, so a theme only has to declare seven colours.
+  r.setProperty("--rule", t.sub + "44");
+  r.setProperty("--lane", t.sub + "33");
+  r.setProperty("--bot", t.sub);
+  r.setProperty("--error-extra", t.error + "88");
+}
+
+function applySettings() {
+  applyTheme(settings.theme);
+  document.body.dataset.caret = settings.caret;
+  document.body.classList.toggle("blind", settings.blind);
+}
+
+/* ============================================================
+   run state
+   ============================================================ */
+const state = {
+  mode: "time",
+  amount: 30,
+  punctuation: false,
+  numbers: false,
+  words: [],
+  typed: [],
+  wordIdx: 0,
+  charIdx: 0,
+  started: false,
+  finished: false,
+  startTime: 0,
+  timeLeft: 30,
+  timerId: null,
+  combo: 0,
+  maxCombo: 0,
+  // Accuracy is graded on keystrokes, not on the text left standing at the
+  // end — a typo you backspace away still counts against you.
+  keys: { correct: 0, wrong: 0 },
+  // One record per elapsed second. Consistency is derived from these.
+  samples: [],
+  sampleId: null,
+  lastSnapshot: { correct: 0, wrong: 0 },
+  // The word list of the run just played, so it can be replayed verbatim.
+  lastWords: null,
+  repeat: false,
+  race: null
+};
+
+const $ = id => document.getElementById(id);
+const $words = $("words"), $input = $("input"), $caret = $("caret");
+const $timer = $("timer"), $combo = $("combo"), $results = $("results");
+const $hint = $("focusHint"), $best = $("best"), $track = $("track");
+
+/* ============================================================
+   word generation
+   ============================================================ */
+const randWord = () => WORDS[Math.floor(Math.random() * WORDS.length)];
+
+function decorate(w) {
+  if (state.numbers && Math.random() < 0.12) return String(Math.floor(Math.random() * 10000));
+  if (state.punctuation && Math.random() < 0.25) {
+    const p = PUNCT[Math.floor(Math.random() * PUNCT.length)];
+    if (p === "'") return w + "'s";
+    if (p === '"') return '"' + w + '"';
+    if (p === "-") return w + "-" + randWord();
+    return w + p;
+  }
+  return w;
+}
+
+function generateWords(n) {
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(decorate(randWord()));
+  if (state.punctuation && out.length) out[0] = out[0][0].toUpperCase() + out[0].slice(1);
+  return out;
+}
+
+function buildTest() {
+  // "repeat" replays the exact list just played — generateWords() is random,
+  // so the words have to be carried over rather than regenerated.
+  if (state.repeat && state.lastWords) {
+    state.words = state.lastWords.slice();
+    state.repeat = false;
+    return;
+  }
+  if (state.mode === "quote") {
+    state.words = QUOTES[Math.floor(Math.random() * QUOTES.length)].split(" ");
+  } else if (state.mode === "words") {
+    state.words = generateWords(state.amount);
+  } else {
+    state.words = generateWords(80);
+  }
+  state.lastWords = state.words.slice();
+}
+
+function extendIfNeeded() {
+  if (state.mode !== "time") return;
+  if (state.wordIdx > state.words.length - 30) {
+    const more = generateWords(40);
+    state.words.push(...more);
+    more.forEach(w => $words.appendChild(renderWord(w)));
+  }
+}
+
+/* ============================================================
+   word rendering (unchanged core)
+   ============================================================ */
+function renderWord(w) {
+  const el = document.createElement("div");
+  el.className = "word";
+  for (const ch of w) {
+    const l = document.createElement("span");
+    l.className = "letter";
+    l.textContent = ch;
+    el.appendChild(l);
+  }
+  return el;
+}
+
+function render() {
+  $words.innerHTML = "";
+  state.words.forEach(w => $words.appendChild(renderWord(w)));
+  $words.scrollTop = 0;
+  updateCaret();
+}
+
+function scrollLine() {
+  const active = $words.children[state.wordIdx];
+  if (!active) return;
+  const lineH = active.offsetHeight;
+  if (active.offsetTop - $words.scrollTop > lineH * 1.2) {
+    $words.scrollTop = active.offsetTop - lineH;
+  }
+}
+
+function updateCaret() {
+  const wordEl = $words.children[state.wordIdx];
+  if (!wordEl) return;
+  const letters = wordEl.querySelectorAll(".letter");
+  const box = $words.getBoundingClientRect();
+
+  let x, y, h;
+  if (state.charIdx < letters.length) {
+    const r = letters[state.charIdx].getBoundingClientRect();
+    x = r.left; y = r.top; h = r.height;
+  } else if (letters.length) {
+    const r = letters[letters.length - 1].getBoundingClientRect();
+    x = r.right; y = r.top; h = r.height;
+  } else {
+    const r = wordEl.getBoundingClientRect();
+    x = r.left; y = r.top; h = r.height;
+  }
+  $caret.style.left   = (x - box.left + $words.offsetLeft) + "px";
+  $caret.style.top    = (y - box.top + $words.offsetTop) + "px";
+  $caret.style.height = h + "px";
+}
+
+function paintWord(idx) {
+  const wordEl = $words.children[idx];
+  if (!wordEl) return;
+  const target = state.words[idx];
+  const typed = state.typed[idx] || "";
+
+  wordEl.querySelectorAll(".letter.extra").forEach(e => e.remove());
+
+  wordEl.querySelectorAll(".letter").forEach((l, i) => {
+    l.classList.remove("correct", "incorrect");
+    if (i < typed.length) l.classList.add(typed[i] === target[i] ? "correct" : "incorrect");
+  });
+
+  for (let i = target.length; i < typed.length; i++) {
+    const l = document.createElement("span");
+    l.className = "letter extra";
+    l.textContent = typed[i];
+    wordEl.appendChild(l);
+  }
+
+  if (idx < state.wordIdx) wordEl.classList.toggle("bad", typed !== target);
+  else wordEl.classList.remove("bad");
+}
+
+/* ============================================================
+   scoring
+   ============================================================ */
+function tally() {
+  let correct = 0, incorrect = 0, extra = 0, missed = 0;
+  const upto = Math.min(state.wordIdx + 1, state.words.length);
+
+  for (let i = 0; i < upto; i++) {
+    const target = state.words[i];
+    const typed = state.typed[i] || "";
+    for (let j = 0; j < Math.max(typed.length, target.length); j++) {
+      if (j >= typed.length)       { if (i < state.wordIdx) missed++; }
+      else if (j >= target.length) extra++;
+      else if (typed[j] === target[j]) correct++;
+      else incorrect++;
+    }
+    if (i < state.wordIdx) correct++; // the space that ended the word
+  }
+  return { correct, incorrect, extra, missed };
+}
+
+/* ---- per-second telemetry ------------------------------------------------
+   Snapshots the keystroke counters once a second. Nothing counts here; it
+   only differences what handleKey() already recorded.                       */
+function startSampler() {
+  state.lastSnapshot = { correct: 0, wrong: 0 };
+  state.sampleId = setInterval(() => {
+    const c = state.keys.correct - state.lastSnapshot.correct;
+    const w = state.keys.wrong - state.lastSnapshot.wrong;
+    state.lastSnapshot = { correct: state.keys.correct, wrong: state.keys.wrong };
+    state.samples.push({
+      sec: state.samples.length + 1,
+      keys: c + w,
+      wrong: w,
+      rawWpm: (c + w) * 60 / 5   // this second's raw speed, extrapolated
+    });
+  }, 1000);
+}
+
+function stopSampler() {
+  clearInterval(state.sampleId);
+  state.sampleId = null;
+}
+
+/** Record the partial second between the last tick and the finish. */
+function flushSample() {
+  if (!state.started) return;
+  const c = state.keys.correct - state.lastSnapshot.correct;
+  const w = state.keys.wrong - state.lastSnapshot.wrong;
+  if (c + w === 0) return;
+  const partial = elapsed() - state.samples.length;
+  // A sliver of a second would extrapolate to an absurd spike and wreck the
+  // spread that consistency measures. Fold it into the previous second.
+  if (partial < 0.25) {
+    const last = state.samples[state.samples.length - 1];
+    if (last) { last.keys += c + w; last.wrong += w; last.rawWpm = last.keys * 60 / 5; }
+    return;
+  }
+  state.samples.push({
+    sec: state.samples.length + 1,
+    keys: c + w, wrong: w,
+    rawWpm: (c + w) * 12 / partial   // (keys/5) / (partial/60)
+  });
+}
+
+/** Coefficient of variation over per-second raw speed. Null when undefined. */
+function consistency() {
+  const v = state.samples.map(s => s.rawWpm);
+  if (v.length < 2) return null;                 // a 1-second run has no spread
+  const mean = v.reduce((a, b) => a + b, 0) / v.length;
+  if (mean === 0) return null;                   // typed nothing: undefined, not 0%
+  const variance = v.reduce((a, b) => a + (b - mean) ** 2, 0) / v.length;
+  const cv = Math.sqrt(variance) / mean;
+  // Floor for the same reason accuracy floors: never overstate.
+  return Math.max(0, Math.min(100, Math.floor((1 - cv) * 100)));
+}
+
+/* ============================================================
+   race
+   ============================================================ */
+function raceLength() {
+  if (state.mode === "time") {
+    // Crossing the line == matching the fastest bot for the whole run.
+    return TOP_BOT.wpm * 5 * (state.amount / 60);
+  }
+  const chars = state.words.reduce((n, w) => n + w.length, 0);
+  return chars + Math.max(state.words.length - 1, 0);
+}
+
+function buildTrack() {
+  const runners = [];
+  $track.innerHTML = '<div class="finish"></div>';
+
+  BOTS.forEach((bot, i) => {
+    const lane = document.createElement("div");
+    lane.className = "lane";
+    lane.innerHTML = '<span class="lane-label">' + bot.wpm + '</span>';
+    const r = document.createElement("div");
+    r.className = "runner";
+    r.style.setProperty("--bob", (1.1 - bot.wpm / 120).toFixed(2) + "s");
+    r.innerHTML = '<span class="glyph">' + bot.emoji + '</span>';
+    lane.appendChild(r);
+    $track.appendChild(lane);
+    runners.push({ el: r, bot: bot, phase: i * 2.1, dist: 0, done: false });
+  });
+
+  const lane = document.createElement("div");
+  lane.className = "lane mine";
+  lane.innerHTML = '<span class="lane-label">you</span>';
+  const me = document.createElement("div");
+  me.className = "runner";
+  me.innerHTML = '<span class="glyph">' + currentAnimal().emoji + '</span>';
+  lane.appendChild(me);
+  $track.appendChild(lane);
+
+  state.race = {
+    length: raceLength(),
+    bots: runners,
+    meEl: me,
+    meDist: 0,
+    meShown: 0,
+    meDone: false,
+    rafId: null
+  };
+  paintRace();
+}
+
+/** Called on every keystroke. The rAF loop only ever reads this. */
+function updateMyDistance() {
+  if (state.race) state.race.meDist = tally().correct;
+}
+
+function botDistance(r, t) {
+  const base = r.bot.wpm * 5 * (t / 60);
+  const wobble = 1 + 0.08 * Math.sin(t * 0.9 + r.phase);
+  return Math.max(0, base * wobble);
+}
+
+function place(el, frac) {
+  el.style.setProperty("--p", Math.max(0, Math.min(1, frac)).toFixed(4));
+}
+
+function paintRace() {
+  const race = state.race;
+  if (!race) return;
+  place(race.meEl, race.meShown / race.length);
+  race.bots.forEach(r => place(r.el, r.dist / race.length));
+}
+
+function tickRace() {
+  const race = state.race;
+  if (!race || state.finished) return;
+  const t = state.started ? elapsed() : 0;
+
+  race.bots.forEach(r => {
+    r.dist = botDistance(r, t);
+    if (!r.done && r.dist >= race.length) {
+      r.done = true;
+      r.el.classList.add("done");
+      r.finishTime = t;
+    }
+  });
+
+  // Ease the player marker toward its true position so each keystroke
+  // reads as a stride rather than a jump.
+  race.meShown += (race.meDist - race.meShown) * 0.18;
+
+  if (!race.meDone && race.meDist >= race.length) {
+    race.meDone = true;
+    race.meEl.classList.add("done");
+    race.meFinishTime = t;
+  }
+
+  // Bob faster the faster you're actually going.
+  const wpmNow = t > 0.5 ? (race.meDist / 5) / (t / 60) : 0;
+  race.meEl.style.setProperty("--bob", Math.max(0.18, 1.1 - wpmNow / 120).toFixed(2) + "s");
+
+  const trail = Math.min(state.combo, 60);
+  race.meEl.style.setProperty("--trail", trail + "px");
+  race.meEl.style.setProperty("--trail-op", state.combo >= 10 ? "0.9" : "0");
+
+  paintRace();
+  race.rafId = requestAnimationFrame(tickRace);
+}
+
+function stopRace() {
+  if (state.race && state.race.rafId) cancelAnimationFrame(state.race.rafId);
+}
+
+/** Ranking: anyone who crossed the line is ordered by when; the rest by distance. */
+function placement() {
+  const race = state.race;
+  const field = race.bots.map(r => ({
+    name: r.bot.wpm + " wpm bot",
+    done: r.done, time: r.finishTime, dist: r.dist, me: false
+  }));
+  field.push({
+    name: "you", done: race.meDone, time: race.meFinishTime, dist: race.meDist, me: true
+  });
+
+  field.sort((a, b) => {
+    if (a.done && b.done) return a.time - b.time;
+    if (a.done) return -1;
+    if (b.done) return 1;
+    return b.dist - a.dist;
+  });
+
+  const mine = field.findIndex(f => f.me);
+  const topBotIdx = field.findIndex(f => f.name === TOP_BOT.wpm + " wpm bot");
+  return { rank: mine + 1, of: field.length, beatTop: mine < topBotIdx };
+}
+
+/* ============================================================
+   combo
+   ============================================================ */
+function comboTier(n) {
+  if (n >= 100) return "t4";
+  if (n >= 50) return "t3";
+  if (n >= 25) return "t2";
+  if (n >= 10) return "t1";
+  return "";
+}
+
+function bumpCombo() {
+  state.combo++;
+  if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+  paintCombo();
+}
+
+function breakCombo() {
+  const lost = state.combo;
+  state.combo = 0;
+  paintCombo();
+  // paintCombo() resets className, so the shake has to be applied after it.
+  if (lost >= 10) {
+    $combo.textContent = lost + "x";
+    $combo.classList.add("show", "break");
+    setTimeout(() => { $combo.classList.remove("break"); paintCombo(); }, 200);
+  }
+}
+
+function paintCombo() {
+  $combo.className = "combo";
+  if (state.combo >= 10) {
+    $combo.classList.add("show", comboTier(state.combo));
+    $combo.textContent = state.combo + "x";
+  } else {
+    $combo.textContent = "";
+  }
+}
+
+/* ============================================================
+   typing
+   ============================================================ */
+const elapsed = () => (performance.now() - state.startTime) / 1000;
+
+function start() {
+  if (state.started) return;
+  state.started = true;
+  state.startTime = performance.now();
+  document.body.classList.add("running");
+
+  if (state.mode === "time") {
+    state.timeLeft = state.amount;
+    $timer.textContent = state.timeLeft;
+    $timer.classList.add("show");
+    state.timerId = setInterval(() => {
+      state.timeLeft--;
+      $timer.textContent = state.timeLeft;
+      if (state.timeLeft <= 0) finish();
+    }, 1000);
+  } else {
+    $timer.classList.add("show");
+    state.timerId = setInterval(() => { $timer.textContent = elapsed().toFixed(0); }, 250);
+  }
+
+  startSampler();
+  tickRace();
+}
+
+function handleKey(e) {
+  if (state.finished) return;
+
+  if (e.key === "Tab" || e.key === "Escape") { e.preventDefault(); restart(); return; }
+
+  if (e.key === "Backspace") {
+    e.preventDefault();
+    if (state.charIdx > 0) {
+      state.typed[state.wordIdx] = state.typed[state.wordIdx].slice(0, -1);
+      state.charIdx--;
+    } else if (state.wordIdx > 0) {
+      const prev = state.wordIdx - 1;
+      if (state.typed[prev] !== state.words[prev]) {
+        state.wordIdx = prev;
+        state.charIdx = state.typed[prev].length;
+        paintWord(prev);
+      }
+    }
+    paintWord(state.wordIdx);
+    updateCaret();
+    updateMyDistance();
+    return;
+  }
+
+  if (e.key === " ") {
+    e.preventDefault();
+    if (state.charIdx === 0) return;
+    start();
+
+    // Two different questions, so two different tests.
+    // Keystroke grading: space is the right key here unless the word is short
+    // — mistyped letters were already counted as they were struck, and
+    // charging for them again would penalise one typo twice.
+    if (state.typed[state.wordIdx].length >= state.words[state.wordIdx].length) state.keys.correct++;
+    else state.keys.wrong++;
+
+    // Combo is a perfection streak, so it needs an exact match.
+    if (state.typed[state.wordIdx] === state.words[state.wordIdx]) bumpCombo();
+    else breakCombo();
+
+    state.wordIdx++;
+    state.charIdx = 0;
+    if (state.typed[state.wordIdx] === undefined) state.typed[state.wordIdx] = "";
+    paintWord(state.wordIdx - 1);
+    extendIfNeeded();
+    scrollLine();
+    updateCaret();
+    updateMyDistance();
+    if (state.mode !== "time" && state.wordIdx >= state.words.length) finish();
+    return;
+  }
+
+  if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  start();
+
+  const target = state.words[state.wordIdx];
+  if (state.typed[state.wordIdx] === undefined) state.typed[state.wordIdx] = "";
+  if (state.typed[state.wordIdx].length >= target.length + 10) return;
+
+  const pos = state.charIdx;
+  const ok = pos < target.length && e.key === target[pos];
+  if (ok) { state.keys.correct++; bumpCombo(); }
+  else    { state.keys.wrong++;   breakCombo(); }
+
+  state.typed[state.wordIdx] += e.key;
+  state.charIdx++;
+  paintWord(state.wordIdx);
+  updateCaret();
+  updateMyDistance();
+
+  if (state.mode !== "time" &&
+      state.wordIdx === state.words.length - 1 &&
+      state.typed[state.wordIdx] === target) finish();
+}
+
+/* ============================================================
+   finish
+   ============================================================ */
+function finish() {
+  if (state.finished) return;
+
+  updateMyDistance();
+  const pl = placement();
+
+  state.finished = true;
+  clearInterval(state.timerId);
+  stopSampler();
+  flushSample();
+  stopRace();
+  document.body.classList.remove("running");
+
+  const secs = state.mode === "time" ? state.amount : Math.max(elapsed(), 0.1);
+  const t = tally();
+  const minutes = secs / 60;
+
+  // Net WPM is defined over the final correct text, so it reads from tally().
+  const wpm = Math.round((t.correct / 5) / minutes) || 0;
+
+  // Accuracy and raw speed are defined over keystrokes. Grading them from the
+  // final text would let a backspace erase the mistake from the score.
+  const struck = state.keys.correct + state.keys.wrong;
+  const raw = Math.round((struck / 5) / minutes) || 0;
+  // floor, not round: rounding reports 100% for anything >= 99.5%, so a typo
+  // in a 200-keystroke run would vanish. Flooring makes 100% mean exactly
+  // zero wrong keystrokes, at any run length.
+  const acc = struck ? Math.floor((state.keys.correct / struck) * 100) : 0;
+
+  const run = {
+    wpm: isFinite(wpm) ? wpm : 0,
+    acc: acc,
+    maxCombo: state.maxCombo,
+    beatTop: pl.beatTop,
+    // wordIdx only counts space-terminated words; a run that ends on the
+    // final character never gets that space, so count the word in progress.
+    wordsTyped: state.wordIdx + (state.charIdx > 0 ? 1 : 0),
+    mode: state.mode,
+    amount: state.amount,
+    secs: secs
+  };
+
+  const cons = consistency();
+
+  $("rWpm").textContent = run.wpm;
+  $("rAcc").textContent = acc + "%";
+  $("rRaw").textContent = isFinite(raw) ? raw : 0;
+  $("rCons").textContent = cons === null ? "—" : cons + "%";
+  $("rCombo").textContent = state.maxCombo;
+  $("rChars").textContent = t.correct + "/" + t.incorrect + "/" + t.extra + "/" + t.missed;
+  $("rTime").textContent = secs.toFixed(0) + "s";
+  $("rType").textContent = testTypeLabel();
+  $("rStamp").textContent = new Date().toLocaleTimeString();
+
+  state.lastResult = { wpm: run.wpm, acc, raw, cons, chars: $("rChars").textContent,
+                       secs: secs.toFixed(0), type: testTypeLabel(), rank: pl.rank, of: pl.of };
+
+  const medals = ["🥇", "🥈", "🥉", "🏳️"];
+  $("rPlace").innerHTML =
+    '<span class="medal">' + medals[Math.min(pl.rank - 1, 3)] + "</span>" +
+    "<span><strong>" + ordinal(pl.rank) + "</strong> of " + pl.of + "</span>";
+
+  const gains = updateProfile(run);
+  renderCards(gains);
+  renderTrophies(gains.newAchievements.map(a => a.id));
+  showBest(run.wpm, acc);
+
+  $words.classList.add("hidden");
+  $caret.classList.add("hidden");
+  $hint.classList.add("hidden");
+  $timer.classList.remove("show");
+  $combo.classList.remove("show");
+  $results.classList.add("show");
+  document.body.classList.add("done");
+  // The results panel is still display:none in this tick, and a non-rendered
+  // element cannot take focus. Wait for the style to land.
+  requestAnimationFrame(() => $("againBtn").focus());
+}
+
+const ordinal = n => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n] || "th");
+
+/** e.g. "time 30" / "words 25 punctuation" — mode, length, and active modifiers. */
+function testTypeLabel() {
+  const base = state.mode === "quote" ? "quote" : state.mode + " " + state.amount;
+  const mods = [state.punctuation && "punctuation", state.numbers && "numbers"].filter(Boolean);
+  return mods.length ? base + "\n" + mods.join(" ") : base;
+}
+
+function updateProfile(run) {
+  const before = ANIMALS.filter(isUnlocked).map(a => a.id);
+
+  const levelBefore = levelFromXp(profile.xp);
+
+  profile.races++;
+  profile.xp += xpForRun(run.wpm, run.acc, run.secs);
+  if (run.wpm > profile.bestWpm) profile.bestWpm = run.wpm;
+  if (run.acc === 100 && run.wordsTyped >= 10) profile.perfect = true;
+  if (run.beatTop) profile.beatTop = true;
+
+  const leveledUp = levelFromXp(profile.xp) > levelBefore;
+
+  const newAnimals = ANIMALS.filter(a => isUnlocked(a) && !before.includes(a.id));
+
+  const newAchievements = ACHIEVEMENTS.filter(
+    a => !profile.earned.includes(a.id) && a.test(run)
+  );
+  newAchievements.forEach(a => profile.earned.push(a.id));
+
+  saveProfile();
+  schedulePush();        // debounced; a failure leaves the local copy authoritative
+  renderAnimals();
+  renderLevel();
+  return { newAnimals: newAnimals, newAchievements: newAchievements, leveledUp: leveledUp };
+}
+
+function renderCards(gains) {
+  const box = $("rCards");
+  box.innerHTML = "";
+  let i = 0;
+
+  if (gains.leveledUp) {
+    box.appendChild(card("unlock", "⭐", "level " + levelFromXp(profile.xp), "levelled up", i++));
+  }
+  gains.newAnimals.forEach(a => {
+    box.appendChild(card("unlock", a.emoji, "new racer", a.id, i++));
+  });
+  gains.newAchievements.forEach(a => {
+    box.appendChild(card("", a.icon, a.name, a.desc, i++));
+  });
+}
+
+function card(kind, icon, name, desc, i) {
+  const el = document.createElement("div");
+  el.className = "card " + kind;
+  el.style.animationDelay = (i * 90) + "ms";
+  el.innerHTML =
+    '<div class="icon"></div><div><div class="name"></div><div class="desc"></div></div>';
+  el.querySelector(".icon").textContent = icon;
+  el.querySelector(".name").textContent = name;
+  el.querySelector(".desc").textContent = desc;
+  return el;
+}
+
+/** `justEarned` highlights icons won in the run that just finished. */
+function renderTrophies(justEarned) {
+  const box = $("trophyShelf");
+  const fresh = justEarned || [];
+  box.innerHTML = "";
+  ACHIEVEMENTS.forEach((a, i) => {
+    const s = document.createElement("span");
+    const earned = profile.earned.includes(a.id);
+    s.textContent = a.icon;
+    // Tab is intercepted globally to restart, so these can never take keyboard
+    // focus — a :focus-visible tooltip would be unreachable. Hover + title.
+    s.dataset.tip = a.name + " — " + a.desc;
+    s.title = a.name + " — " + a.desc;
+    s.setAttribute("aria-label", a.name + (earned ? " (earned)" : " (locked)") + ": " + a.desc);
+    if (earned) s.classList.add("earned");
+    if (fresh.includes(a.id)) {
+      s.classList.add("just");
+      s.style.animationDelay = (i * 60) + "ms";
+    }
+    box.appendChild(s);
+  });
+}
+
+const pbKey = () => state.mode + "-" + (state.mode === "quote" ? "q" : state.amount);
+
+function showBest(wpm, acc) {
+  const key = pbKey();
+  const label = state.mode + (state.mode === "quote" ? "" : " " + state.amount);
+  const best = profile.pbs[key] || 0;
+  if (wpm > best && acc >= 50) {
+    profile.pbs[key] = wpm;
+    saveProfile();
+    $best.textContent = "new personal best: " + wpm + " wpm";
+  } else if (best) {
+    $best.textContent = "personal best (" + label + "): " + best + " wpm";
+  } else {
+    $best.textContent = "";
+  }
+}
+
+/* ============================================================
+   lifecycle
+   ============================================================ */
+function restart() {
+  clearInterval(state.timerId);
+  stopSampler();
+  stopRace();
+  Object.assign(state, {
+    typed: [], wordIdx: 0, charIdx: 0,
+    started: false, finished: false, timeLeft: state.amount,
+    combo: 0, maxCombo: 0,
+    keys: { correct: 0, wrong: 0 },
+    samples: [], lastSnapshot: { correct: 0, wrong: 0 }
+  });
+  document.body.classList.remove("running", "done");
+
+  // Reveal the word list and build the track *before* measuring the caret:
+  // updateCaret() reads getBoundingClientRect(), which is all zeroes while
+  // #words is display:none, and the track's height shifts the words down.
+  $words.classList.remove("hidden");
+  $caret.classList.remove("hidden");
+  $hint.classList.remove("hidden");
+  $results.classList.remove("show");
+
+  buildTest();
+  buildTrack();
+  render();
+  paintCombo();
+
+  $timer.textContent = state.mode === "time" ? state.amount : "0";
+  $timer.classList.remove("show");
+  $best.textContent = "";
+  focusInput();
+
+  // Snap to the start rather than gliding there from the last run's position.
+  $caret.style.transition = "none";
+  updateCaret();
+  requestAnimationFrame(() => { $caret.style.transition = ""; });
+}
+
+function focusInput() {
+  $input.focus();
+  $words.classList.remove("unfocused");
+}
+
+/* ============================================================
+   result actions
+   ============================================================ */
+function repeatTest() {
+  state.repeat = true;
+  restart();
+}
+
+/** Brief confirmation on an icon button, since nothing else visibly happens. */
+function flash(btn, ok) {
+  const original = btn.textContent;
+  btn.textContent = ok ? "✓" : "✕";
+  btn.classList.toggle("ok", ok);
+  setTimeout(() => { btn.textContent = original; btn.classList.remove("ok"); }, 1200);
+}
+
+function resultText() {
+  const r = state.lastResult;
+  if (!r) return "";
+  return [
+    "typespeed — " + r.type.replace("\n", " "),
+    r.wpm + " wpm · " + r.acc + "% acc · " + (r.cons === null ? "—" : r.cons + "% consistency"),
+    "raw " + r.raw + " · chars " + r.chars + " · " + r.secs + "s",
+    "placed " + ordinal(r.rank) + " of " + r.of
+  ].join("\n");
+}
+
+async function copyResult(btn) {
+  try {
+    await navigator.clipboard.writeText(resultText());
+    flash(btn, true);
+  } catch (e) {
+    flash(btn, false);   // clipboard needs a secure context and permission
+  }
+}
+
+/** Hand-drawn canvas: html2canvas is an external host, which the artifact CSP blocks. */
+function saveImage(btn) {
+  const r = state.lastResult;
+  if (!r) return;
+  const css = getComputedStyle(document.documentElement);
+  const tok = n => css.getPropertyValue(n).trim();
+  const W = 900, H = 340, dpr = 2;
+  const c = document.createElement("canvas");
+  c.width = W * dpr; c.height = H * dpr;
+  const g = c.getContext("2d");
+  g.scale(dpr, dpr);
+
+  g.fillStyle = tok("--bg"); g.fillRect(0, 0, W, H);
+  const mono = 'ui-monospace, "SF Mono", Consolas, monospace';
+
+  g.fillStyle = tok("--main");
+  g.font = "700 26px " + mono;
+  g.fillText("typespeed", 40, 54);
+
+  g.fillStyle = tok("--sub");
+  g.font = "14px " + mono;
+  g.fillText(r.type.replace("\n", "  "), 40, 82);
+
+  const big = [["wpm", r.wpm], ["acc", r.acc + "%"]];
+  big.forEach(([label, val], i) => {
+    const x = 40 + i * 220;
+    g.fillStyle = tok("--sub"); g.font = "14px " + mono; g.fillText(label, x, 140);
+    g.fillStyle = tok("--main"); g.font = "700 64px " + mono; g.fillText(String(val), x, 200);
+  });
+
+  const small = [["raw", r.raw], ["consistency", r.cons === null ? "—" : r.cons + "%"],
+                 ["chars", r.chars], ["time", r.secs + "s"]];
+  small.forEach(([label, val], i) => {
+    const x = 500, y = 130 + i * 46;
+    g.fillStyle = tok("--sub"); g.font = "13px " + mono; g.fillText(label, x, y);
+    g.fillStyle = tok("--text"); g.font = "20px " + mono; g.fillText(String(val), x + 150, y);
+  });
+
+  g.fillStyle = tok("--sub"); g.font = "14px " + mono;
+  g.fillText("placed " + ordinal(r.rank) + " of " + r.of, 40, 300);
+
+  c.toBlob(blob => {
+    if (!blob) return flash(btn, false);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "typespeed-" + r.wpm + "wpm.png";
+    a.click();
+    URL.revokeObjectURL(url);
+    flash(btn, true);
+  }, "image/png");
+}
+
+/* ============================================================
+   config UI
+   ============================================================ */
+function currentAnimal() {
+  const a = ANIMALS.find(x => x.id === profile.animal);
+  return a && isUnlocked(a) ? a : ANIMALS[0];
+}
+
+function renderAnimals() {
+  const box = $("animals");
+  box.innerHTML = "";
+  ANIMALS.forEach(a => {
+    const b = document.createElement("button");
+    const unlocked = isUnlocked(a);
+    b.className = "animal" + (unlocked ? "" : " locked") +
+                  (a.id === currentAnimal().id ? " selected" : "");
+    b.textContent = a.emoji;
+    b.setAttribute("aria-label", unlocked ? "race as " + a.id : a.id + " — locked");
+    b.dataset.tip = unlocked ? a.id : "locked · " + a.req;
+    b.disabled = !unlocked;
+    b.onclick = () => {
+      profile.animal = a.id;
+      saveProfile();
+      renderAnimals();
+      if (state.race) {
+        state.race.meEl.querySelector(".glyph").textContent = a.emoji;
+      }
+    };
+    box.appendChild(b);
+  });
+}
+
+/* ---------- account panel ---------- */
+function renderAccount() {
+  const box = $("accountBox");
+  if (!box) return;
+  box.innerHTML = "";
+
+  if (!cloud) {
+    const p = document.createElement("div");
+    p.className = "setting-hint";
+    p.textContent = cloudError === "not configured"
+      ? "cloud sync is not configured for this build — progress is saved in this browser only."
+      : "cloud sync is unavailable here (this page cannot reach the network) — progress is saved in this browser only.";
+    box.appendChild(p);
+    return;
+  }
+
+  if (session) {
+    const row = document.createElement("div");
+    row.className = "account-row";
+    const who = document.createElement("span");
+    who.className = "account-email";
+    who.textContent = session.user.email;
+    const status = document.createElement("span");
+    status.className = "setting-hint";
+    status.textContent = cloudError ? cloudError : "synced";
+    const out = document.createElement("button");
+    out.className = "opt"; out.textContent = "sign out";
+    out.onclick = () => signOut();
+    row.append(who, status, out);
+    box.appendChild(row);
+    return;
+  }
+
+  const form = document.createElement("form");
+  form.className = "account-row";
+  form.innerHTML =
+    '<input class="email" type="email" required placeholder="you@example.com" autocomplete="email">' +
+    '<button class="opt" type="submit">send link</button>';
+  const msg = document.createElement("div");
+  msg.className = "setting-hint";
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const btn = form.querySelector("button");
+    btn.disabled = true; msg.textContent = "sending…";
+    const r = await sendMagicLink(form.querySelector(".email").value.trim());
+    msg.textContent = r.msg;
+    btn.disabled = false;
+  };
+  box.append(form, msg);
+}
+
+/* ---------- settings panel ---------- */
+function renderSettings() {
+  renderAccount();
+  const themes = $("themeList");
+  themes.innerHTML = "";
+  Object.entries(THEMES).forEach(([id, t]) => {
+    const b = document.createElement("button");
+    b.className = "swatch" + (id === settings.theme ? " active" : "");
+    b.innerHTML = '<span class="dots"></span><span class="name"></span>';
+    [t.bg, t.main, t.text].forEach(c => {
+      const d = document.createElement("span");
+      d.className = "dot"; d.style.background = c;
+      d.style.boxShadow = "0 0 0 1px rgba(128,128,128,0.35)";
+      b.querySelector(".dots").appendChild(d);
+    });
+    b.querySelector(".name").textContent = t.name;
+    b.onclick = () => { settings.theme = id; saveSettings(); applySettings(); renderSettings(); };
+    themes.appendChild(b);
+  });
+
+  const carets = $("caretList");
+  carets.innerHTML = "";
+  CARETS.forEach(c => {
+    const b = document.createElement("button");
+    b.className = "opt" + (c === settings.caret ? " active" : "");
+    b.textContent = c;
+    b.onclick = () => { settings.caret = c; saveSettings(); applySettings(); renderSettings(); updateCaret(); };
+    carets.appendChild(b);
+  });
+
+  const blind = $("blindBtn");
+  blind.textContent = settings.blind ? "on" : "off";
+  blind.classList.toggle("active", settings.blind);
+
+  renderLevel();
+}
+
+function openSettings()  { $("settings").hidden = false; renderSettings(); $("closeSettings").focus(); }
+function closeSettings() { $("settings").hidden = true; focusInput(); }
+
+function renderAmounts() {
+  const g = $("amountGroup");
+  if (state.mode === "quote") { g.classList.add("hidden"); return; }
+  g.classList.remove("hidden");
+  g.innerHTML = "";
+  AMOUNTS[state.mode].forEach(n => {
+    const b = document.createElement("button");
+    b.className = "opt" + (n === state.amount ? " active" : "");
+    b.textContent = n;
+    b.onclick = () => { state.amount = n; renderAmounts(); restart(); };
+    g.appendChild(b);
+  });
+}
+
+$("modeGroup").addEventListener("click", e => {
+  const btn = e.target.closest("[data-mode]");
+  if (!btn) return;
+  state.mode = btn.dataset.mode;
+  [...e.currentTarget.children].forEach(c => c.classList.toggle("active", c === btn));
+  if (state.mode !== "quote") state.amount = AMOUNTS[state.mode][1];
+  renderAmounts();
+  restart();
+});
+
+$("punctBtn").addEventListener("click", e => {
+  state.punctuation = !state.punctuation;
+  e.target.classList.toggle("active", state.punctuation);
+  restart();
+});
+$("numBtn").addEventListener("click", e => {
+  state.numbers = !state.numbers;
+  e.target.classList.toggle("active", state.numbers);
+  restart();
+});
+
+/* ============================================================
+   wiring
+   ============================================================ */
+$input.addEventListener("keydown", handleKey);
+$input.addEventListener("blur", () => { if (!state.finished) $words.classList.add("unfocused"); });
+$input.addEventListener("focus", () => $words.classList.remove("unfocused"));
+$hint.addEventListener("click", focusInput);
+$words.addEventListener("click", focusInput);
+$("againBtn").addEventListener("click", restart);
+$("repeatBtn").addEventListener("click", repeatTest);
+$("copyBtn").addEventListener("click", e => copyResult(e.currentTarget));
+$("imageBtn").addEventListener("click", e => saveImage(e.currentTarget));
+
+$("gearBtn").addEventListener("click", openSettings);
+$("closeSettings").addEventListener("click", closeSettings);
+$("blindBtn").addEventListener("click", () => {
+  settings.blind = !settings.blind;
+  saveSettings(); applySettings(); renderSettings();
+});
+// Clicking the backdrop, but not the sheet itself, dismisses.
+$("settings").addEventListener("click", e => { if (e.target === $("settings")) closeSettings(); });
+
+document.addEventListener("keydown", e => {
+  // The modal owns Escape while it is open, otherwise Escape restarts the race.
+  if (!$("settings").hidden) {
+    if (e.key === "Escape") { e.preventDefault(); closeSettings(); }
+    return;
+  }
+  if (state.finished && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); restart(); return; }
+  if (document.activeElement === $input) return;
+  if (e.target.closest(".config")) return;
+  if (e.key === "Tab" || e.key === "Escape") { e.preventDefault(); restart(); return; }
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+    focusInput();
+    handleKey(e);   // don't swallow the keystroke that woke us up
+  }
+});
+
+window.addEventListener("resize", updateCaret);
+
+applySettings();    // theme/caret/blind before first paint, so nothing flashes
+renderAnimals();
+renderAmounts();
+renderTrophies();   // profile.earned is already loaded, so the shelf is populated before the first race
+renderLevel();
+restart();
+
+// Async and non-blocking: the game is fully playable before (and without) this.
+initCloud();
+</script>
+</body>
+</html>
