@@ -68,11 +68,33 @@
   }
   .gear {
     background: none; border: none; cursor: pointer;
-    color: var(--sub); font-size: 0.7em; padding: 0.2rem;
-    transition: color 0.1s, transform 0.2s;
+    color: var(--text); font-size: 1.05em; line-height: 1;
+    width: 1.9em; height: 1.9em; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    transition: color 0.1s, background 0.1s, transform 0.2s;
   }
-  .gear:hover { color: var(--main); transform: rotate(45deg); }
+  .gear:hover { color: var(--main); background: var(--panel); transform: rotate(45deg); }
   .gear:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+
+  /* Account chip: the always-visible signed-in indicator and path to sign out. */
+  .chip {
+    background: var(--panel); border: 1px solid var(--rule); cursor: pointer;
+    color: var(--text); font: inherit; font-size: 0.55em; font-weight: 700;
+    height: 1.7em; min-width: 1.7em; padding: 0 0.5em;
+    border-radius: 0.9em; display: flex; align-items: center; gap: 0.4em;
+    transition: border-color 0.1s;
+  }
+  .chip[hidden] { display: none; }
+  .chip:hover { border-color: var(--sub); }
+  .chip:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+  .chip .avatar {
+    width: 1.5em; height: 1.5em; border-radius: 50%;
+    background: var(--main); color: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85em; overflow: hidden;
+  }
+  .chip .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .chip.out { color: var(--sub); }
 
   /* ---------- settings ---------- */
   .modal {
@@ -120,6 +142,14 @@
     color: var(--text); font: inherit; font-size: 0.75rem; padding: 0.4rem 0.6rem;
   }
   .email:focus-visible { outline: 2px solid var(--main); outline-offset: 1px; }
+
+  .opt.google { display: inline-flex; align-items: center; gap: 0.45rem; }
+  .opt.google .g {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.1rem; height: 1.1rem; border-radius: 50%;
+    background: var(--text); color: var(--panel); font-weight: 700; font-size: 0.75rem;
+  }
+  .account-row.backup { margin-top: 0.25rem; }
 
   .xp-row { display: flex; align-items: center; gap: 0.75rem; }
   .xp-bar {
@@ -499,6 +529,7 @@
 <header>
   <span class="wordmark">typespeed</span>
   <span class="level" id="levelBadge" data-tip="level">1</span>
+  <button class="chip" id="accountChip" hidden></button>
   <button class="gear" id="gearBtn" aria-label="Settings" data-tip="settings">⚙</button>
 </header>
 
@@ -816,14 +847,14 @@ async function initCloud() {
       const wasSignedIn = !!session;
       session = s;
       if (s && !wasSignedIn) await pullAndMerge();
-      renderAccount();
+      renderAuthUI();
     });
     if (session) await pullAndMerge();
   } catch (e) {
     cloud = null;
     cloudError = "unavailable here";   // artifact CSP, offline, or CDN blocked
   }
-  renderAccount();
+  renderAuthUI();
 }
 
 async function pullAndMerge() {
@@ -839,7 +870,7 @@ async function pullAndMerge() {
     await pushProgress();           // write the merge back so both sides agree
   } catch (e) {
     noteCloudError(e);
-    renderAccount();
+    renderAuthUI();
   }
 }
 
@@ -863,26 +894,91 @@ async function pushProgress() {
   } catch (e) {
     noteCloudError(e);            // local copy stays authoritative
   }
-  renderAccount();
+  renderAuthUI();
 }
 
-async function sendMagicLink(email) {
+/** Full-page redirect to Google and back. detectSessionInUrl (default) then
+    exchanges the returned code; initCloud's listeners pick up the session. */
+async function signInWithGoogle() {
   if (!cloud) return { ok: false, msg: "cloud sync " + (cloudError || "unavailable") };
   try {
-    const { error } = await cloud.auth.signInWithOtp({
-      email, options: { emailRedirectTo: location.origin + location.pathname }
+    const { error } = await cloud.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: location.origin + location.pathname }
     });
     if (error) throw error;
-    return { ok: true, msg: "check your email for the sign-in link" };
+    return { ok: true, msg: "redirecting to google…" };
   } catch (e) {
-    return { ok: false, msg: e.message || "could not send link" };
+    return { ok: false, msg: e.message || "could not start sign-in" };
   }
 }
 
 async function signOut() {
-  if (cloud) await cloud.auth.signOut();
+  // Clear locally even if the network revoke fails, or the UI would stay stuck
+  // on "signed in" forever (the reported logout bug).
+  try { if (cloud) await cloud.auth.signOut(); } catch (e) { /* ignore */ }
   session = null;
+  renderAuthUI();
+}
+
+/* ---- backup code: account-free progress transfer, works everywhere ---- */
+const CODE_PREFIX = "TS1:";
+
+function exportCode() {
+  return CODE_PREFIX + btoa(encodeURIComponent(JSON.stringify(progressOf(profile))));
+}
+
+/** Merge a pasted code into local progress. Reuses mergeProgress, so it is
+    non-destructive and idempotent. Returns a small result for the UI. */
+function importCode(text) {
+  const raw = (text || "").trim();
+  if (!raw.startsWith(CODE_PREFIX)) return { ok: false, msg: "not a valid code" };
+  let parsed;
+  try {
+    parsed = JSON.parse(decodeURIComponent(atob(raw.slice(CODE_PREFIX.length))));
+  } catch (e) {
+    return { ok: false, msg: "code is corrupted" };
+  }
+  if (!parsed || typeof parsed !== "object" || !("races" in parsed) || !("earned" in parsed)) {
+    return { ok: false, msg: "not a typespeed code" };
+  }
+  Object.assign(profile, mergeProgress(progressOf(profile), parsed));
+  saveProfile();
+  renderAnimals(); renderTrophies(); renderLevel(); renderAuthUI();
+  schedulePush();                       // push the merge up if signed in
+  return { ok: true, msg: "progress restored" };
+}
+
+/* ---- unified auth/account rendering (header chip + settings panel) ---- */
+function renderAuthUI() {
+  renderChip();
   renderAccount();
+}
+
+function renderChip() {
+  const chip = $("accountChip");
+  if (!chip) return;
+  if (!cloud) { chip.hidden = true; return; }   // local/artifact mode: no sync to indicate
+  chip.hidden = false;
+  chip.onclick = openSettings;
+
+  if (session) {
+    const email = session.user.email || "account";
+    const pic = session.user.user_metadata && session.user.user_metadata.avatar_url;
+    chip.classList.remove("out");
+    chip.dataset.tip = email + " — signed in";
+    chip.setAttribute("aria-label", "signed in as " + email);
+    chip.innerHTML = '<span class="avatar"></span><span class="who"></span>';
+    const av = chip.querySelector(".avatar");
+    if (pic) { const img = document.createElement("img"); img.src = pic; img.alt = ""; av.appendChild(img); }
+    else av.textContent = email[0].toUpperCase();
+    chip.querySelector(".who").textContent = "synced";
+  } else {
+    chip.classList.add("out");
+    chip.dataset.tip = "sign in to sync progress";
+    chip.setAttribute("aria-label", "sign in");
+    chip.textContent = "sign in";
+  }
 }
 
 /* ============================================================
@@ -1829,22 +1925,20 @@ function renderAccount() {
   if (!box) return;
   box.innerHTML = "";
 
+  // --- cloud sign-in section (only when the backend is reachable) ---
   if (!cloud) {
     const p = document.createElement("div");
     p.className = "setting-hint";
     p.textContent = cloudError === "not configured"
-      ? "cloud sync is not configured for this build — progress is saved in this browser only."
-      : "cloud sync is unavailable here (this page cannot reach the network) — progress is saved in this browser only.";
+      ? "cloud sync isn't configured for this build — progress saves in this browser. use a backup code below to move it."
+      : "cloud sync can't be reached here — progress saves in this browser. use a backup code below to move it.";
     box.appendChild(p);
-    return;
-  }
-
-  if (session) {
+  } else if (session) {
     const row = document.createElement("div");
     row.className = "account-row";
     const who = document.createElement("span");
     who.className = "account-email";
-    who.textContent = session.user.email;
+    who.textContent = session.user.email || "signed in";
     const status = document.createElement("span");
     status.className = "setting-hint";
     status.textContent = cloudError ? cloudError : "synced";
@@ -1853,30 +1947,44 @@ function renderAccount() {
     out.onclick = () => signOut();
     row.append(who, status, out);
     box.appendChild(row);
-    return;
+  } else {
+    const row = document.createElement("div");
+    row.className = "account-row";
+    const g = document.createElement("button");
+    g.className = "opt google"; g.type = "button";
+    g.innerHTML = '<span class="g">G</span> sign in with google';
+    const msg = document.createElement("span");
+    msg.className = "setting-hint";
+    g.onclick = async () => { g.disabled = true; const r = await signInWithGoogle(); if (!r.ok) { msg.textContent = r.msg; g.disabled = false; } };
+    row.append(g, msg);
+    box.appendChild(row);
   }
 
-  const form = document.createElement("form");
-  form.className = "account-row";
-  form.innerHTML =
-    '<input class="email" type="email" required placeholder="you@example.com" autocomplete="email">' +
-    '<button class="opt" type="submit">send link</button>';
-  const msg = document.createElement("div");
-  msg.className = "setting-hint";
-  form.onsubmit = async e => {
-    e.preventDefault();
-    const btn = form.querySelector("button");
-    btn.disabled = true; msg.textContent = "sending…";
-    const r = await sendMagicLink(form.querySelector(".email").value.trim());
-    msg.textContent = r.msg;
-    btn.disabled = false;
+  // --- backup code section (always available, cloud or not) ---
+  const bk = document.createElement("div");
+  bk.className = "account-row backup";
+  bk.innerHTML =
+    '<button class="opt" id="copyProgress" type="button">copy progress code</button>' +
+    '<input class="email restore" type="text" placeholder="paste a code to restore" autocomplete="off">' +
+    '<button class="opt" id="restoreProgress" type="button">restore</button>';
+  const bkMsg = document.createElement("div");
+  bkMsg.className = "setting-hint";
+  bkMsg.textContent = "no google account? move progress between browsers with a code.";
+  box.append(bk, bkMsg);
+
+  bk.querySelector("#copyProgress").onclick = async e => {
+    try { await navigator.clipboard.writeText(exportCode()); flash(e.currentTarget, true); bkMsg.textContent = "code copied — paste it in another browser"; }
+    catch (err) { flash(e.currentTarget, false); bkMsg.textContent = "couldn't copy — clipboard blocked"; }
   };
-  box.append(form, msg);
+  bk.querySelector("#restoreProgress").onclick = () => {
+    const r = importCode(bk.querySelector(".restore").value);
+    bkMsg.textContent = r.msg;
+  };
 }
 
 /* ---------- settings panel ---------- */
 function renderSettings() {
-  renderAccount();
+  renderAuthUI();
   const themes = $("themeList");
   themes.innerHTML = "";
   Object.entries(THEMES).forEach(([id, t]) => {
@@ -1994,6 +2102,7 @@ renderAnimals();
 renderAmounts();
 renderTrophies();   // profile.earned is already loaded, so the shelf is populated before the first race
 renderLevel();
+renderAuthUI();     // chip hidden until initCloud resolves, but wires the local backup-code panel
 restart();
 
 // Async and non-blocking: the game is fully playable before (and without) this.
