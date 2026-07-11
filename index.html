@@ -150,6 +150,14 @@
     background: var(--text); color: var(--panel); font-weight: 700; font-size: 0.75rem;
   }
   .account-row.backup { margin-top: 0.25rem; }
+  .or-divider {
+    display: flex; align-items: center; gap: 0.6rem;
+    color: var(--bot); font-size: 0.65rem; letter-spacing: 0.08em;
+    margin: 0.1rem 0;
+  }
+  .or-divider::before, .or-divider::after {
+    content: ""; flex: 1; height: 1px; background: var(--rule);
+  }
 
   .xp-row { display: flex; align-items: center; gap: 0.75rem; }
   .xp-bar {
@@ -911,6 +919,38 @@ async function signInWithGoogle() {
   } catch (e) {
     return { ok: false, msg: e.message || "could not start sign-in" };
   }
+}
+
+/** Turn a Supabase auth error message into something friendly. */
+function authMsg(e) {
+  const m = (e && e.message) || "";
+  if (/Invalid login credentials/i.test(m)) return "wrong email or password";
+  if (/already registered|already exists/i.test(m)) return "that email already has an account — use sign in";
+  if (/at least|password.*6|weak/i.test(m)) return "password must be at least 6 characters";
+  if (/email.*invalid|invalid.*email/i.test(m)) return "that email doesn't look right";
+  return m || "something went wrong";
+}
+
+const validCreds = (email, pw) =>
+  !email ? "enter your email" : !/.+@.+\..+/.test(email) ? "that email doesn't look right"
+  : (pw || "").length < 6 ? "password must be at least 6 characters" : null;
+
+async function signInEmail(email, pw) {
+  if (!cloud) return { ok: false, msg: "cloud sync " + (cloudError || "unavailable") };
+  const bad = validCreds(email, pw); if (bad) return { ok: false, msg: bad };
+  const { error } = await cloud.auth.signInWithPassword({ email, password: pw });
+  return error ? { ok: false, msg: authMsg(error) } : { ok: true, msg: "signed in" };
+}
+
+async function signUpEmail(email, pw) {
+  if (!cloud) return { ok: false, msg: "cloud sync " + (cloudError || "unavailable") };
+  const bad = validCreds(email, pw); if (bad) return { ok: false, msg: bad };
+  const { data, error } = await cloud.auth.signUp({ email, password: pw });
+  if (error) return { ok: false, msg: authMsg(error) };
+  // With "Confirm email" ON, signUp returns a user but no session and nothing
+  // else happens — say so plainly instead of a misleading "signed in".
+  if (!data.session) return { ok: false, msg: "this build needs email confirmation turned off in supabase to sign up" };
+  return { ok: true, msg: "account created" };
 }
 
 async function signOut() {
@@ -1953,11 +1993,37 @@ function renderAccount() {
     const g = document.createElement("button");
     g.className = "opt google"; g.type = "button";
     g.innerHTML = '<span class="g">G</span> sign in with google';
-    const msg = document.createElement("span");
-    msg.className = "setting-hint";
-    g.onclick = async () => { g.disabled = true; const r = await signInWithGoogle(); if (!r.ok) { msg.textContent = r.msg; g.disabled = false; } };
-    row.append(g, msg);
+    const gmsg = document.createElement("span");
+    gmsg.className = "setting-hint";
+    g.onclick = async () => { g.disabled = true; const r = await signInWithGoogle(); if (!r.ok) { gmsg.textContent = r.msg; g.disabled = false; } };
+    row.append(g, gmsg);
     box.appendChild(row);
+
+    // email + password, for anyone without a google account
+    const div = document.createElement("div");
+    div.className = "or-divider"; div.textContent = "or with email";
+    const form = document.createElement("form");
+    form.className = "account-row email-auth";
+    form.innerHTML =
+      '<input class="email" type="email" placeholder="you@example.com" autocomplete="email">' +
+      '<input class="email pw" type="password" placeholder="password" autocomplete="current-password">' +
+      '<button class="opt" type="submit">sign in</button>' +
+      '<button class="opt" type="button" data-signup>create account</button>';
+    const msg = document.createElement("div");
+    msg.className = "setting-hint";
+
+    const run = async (fn) => {
+      const email = form.querySelector(".email").value.trim();
+      const pw = form.querySelector(".pw").value;
+      form.querySelectorAll("button").forEach(b => b.disabled = true);
+      msg.textContent = "…";
+      const r = await fn(email, pw);
+      msg.textContent = r.msg;                       // on success onAuthStateChange re-renders
+      form.querySelectorAll("button").forEach(b => b.disabled = false);
+    };
+    form.onsubmit = e => { e.preventDefault(); run(signInEmail); };
+    form.querySelector("[data-signup]").onclick = () => run(signUpEmail);
+    box.append(div, form, msg);
   }
 
   // --- backup code section (always available, cloud or not) ---
@@ -1969,7 +2035,7 @@ function renderAccount() {
     '<button class="opt" id="restoreProgress" type="button">restore</button>';
   const bkMsg = document.createElement("div");
   bkMsg.className = "setting-hint";
-  bkMsg.textContent = "no google account? move progress between browsers with a code.";
+  bkMsg.textContent = "backup code: move progress between browsers by hand, or recover if you forget your password.";
   box.append(bk, bkMsg);
 
   bk.querySelector("#copyProgress").onclick = async e => {
